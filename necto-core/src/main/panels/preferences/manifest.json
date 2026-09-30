@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "preferences",
-  "name": "SharedPreferences",
-  "description": "What the app has stored in SharedPreferences",
+  "name": "DataStore",
+  "description": "What the app has stored in DataStore Preferences",
   "version": "0.1.0",
   "author": "Necto",
   "icon": {

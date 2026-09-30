@@ -19,19 +19,24 @@ adb forward tcp:9979 tcp:9979
 | 모듈 | 내용 | iOS 대응 |
 | --- | --- | --- |
 | `necto-core` (순수 JVM) | 프로토콜 모델·JSON·스키마 검증, 길이 프리픽스 소켓 전송, SDK 런타임(코루틴), Events·Network·Performance·Files·UI Control 플러그인 공통부, 웹 패널 | `NectoModel`, `NectoTransport`, `NectoSDK`, `NectoDefaultPlugins` |
-| `necto-android` | Context 기반 앱 identity, SharedPreferences 플러그인, 프로세스 성능 샘플러(CPU·PSS·FPS·스레드), View 기반 UI Control, 기본 Files 루트 | `NectoProcessMetrics`, UIKit 부분 |
+| `necto-android` | Context 기반 앱 identity, DataStore Preferences 플러그인, 프로세스 성능 샘플러(CPU·PSS·FPS·스레드), View 기반 UI Control, 기본 Files 루트 | `NectoProcessMetrics`, UIKit 부분 |
 | `necto-okhttp` | OkHttp `Interceptor`로 네트워크 캡처 | `NectoURLSessionCapture` |
 
 ## 사용법
 
 ```kotlin
+val Context.settings by preferencesDataStore("settings")
+
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
         if (BuildConfig.DEBUG) {
             val events = NectoEventsPlugin()
             val network = NectoNetworkPlugin()
-            NectoAndroid.start(this, NectoAndroidPlugins.defaults(this, events, network))
+            NectoAndroid.start(
+                this,
+                NectoAndroidPlugins.defaults(this, events, network, dataStores = mapOf("settings" to settings)),
+            )
 
             okHttpClient = OkHttpClient.Builder()
                 .addInterceptor(NectoOkHttpInterceptor(network))
@@ -56,7 +61,7 @@ class ThingsPlugin : NectoPlugin {
 
 ## iOS와 다른 점
 
-- Preferences: `UserDefaults` 대신 `SharedPreferences`. `standard` = `<package>_preferences`, 그 외 파일은 `names`로 지정하거나 `discoverAll = true`. Long/Float는 패널에서 Int/Double로 편집되고 저장 시 원래 타입 유지.
+- Preferences: `UserDefaults` 대신 Jetpack DataStore Preferences. DataStore는 파일당 인스턴스 하나만 허용되므로 앱이 가진 인스턴스를 이름과 함께 넘김 (`dataStores = mapOf("settings" to context.settings)`). 첫 번째가 기본 store. Long/Float는 패널에서 Int/Double로 편집되고 저장 시 원래 타입 유지. ByteArray 값은 읽기 전용.
 - Files 루트: `files`, `cache`, `data`(shared_prefs·databases 포함), `external`, `external-cache`.
 - Performance: `memory` = total PSS, `resident-memory` = VmRSS, `compressed-memory` = VmSwap(zram), 추가로 `java-heap`, `native-heap`.
 - UI Control: View 트리 기반. 좌표는 px. back은 시스템 BACK 키(`method: "backKey"`). Compose 내부 요소와 다이얼로그/팝업 창은 아직 대상이 아님.

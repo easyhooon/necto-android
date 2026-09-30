@@ -28,5 +28,6 @@ kotlin {
 
 dependencies {
     api(project(":necto-core"))
+    api("androidx.datastore:datastore-preferences-core:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

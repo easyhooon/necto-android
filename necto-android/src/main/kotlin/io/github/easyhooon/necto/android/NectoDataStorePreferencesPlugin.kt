@@ -1,7 +1,16 @@
 package io.github.easyhooon.necto.android
 
-import android.content.Context
-import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import io.github.easyhooon.necto.model.NectoBridgeError
 import io.github.easyhooon.necto.model.NectoBridgeErrorCode
 import io.github.easyhooon.necto.model.NectoJsonValue
@@ -12,22 +21,27 @@ import io.github.easyhooon.necto.plugins.NectoPanels
 import io.github.easyhooon.necto.sdk.NectoPlugin
 import io.github.easyhooon.necto.sdk.NectoPluginPanel
 import io.github.easyhooon.necto.sdk.NectoRegistrar
-import java.io.File
+import kotlinx.coroutines.flow.first
 
 /**
- * What the app has stored in `SharedPreferences`, read from Necto: the Android
+ * What the app keeps in Jetpack DataStore Preferences, read from Necto: the Android
  * counterpart of the iOS UserDefaults plugin, answering the same `preferences.*` contracts.
  *
- * `standard` is the default preferences file (`<package>_preferences`). Other files are
- * offered only when named in [names], or when [discoverAll] lists every file in
- * `shared_prefs`: a panel that can name any file can read anything the app stored.
+ * DataStore allows one instance per file, so the app hands over the instances it already
+ * owns, by name. The first is the default store (`standard` also reaches it); a store the
+ * app did not hand over cannot be read.
+ *
+ * ```kotlin
+ * val Context.settings by preferencesDataStore("settings")
+ * NectoDataStorePreferencesPlugin(mapOf("settings" to context.settings))
+ * ```
  */
-public class NectoSharedPreferencesPlugin(
-    context: Context,
-    private val names: List<String> = emptyList(),
-    private val discoverAll: Boolean = false,
+public class NectoDataStorePreferencesPlugin(
+    private val stores: Map<String, DataStore<Preferences>>,
 ) : NectoPlugin {
-    private val context = context.applicationContext
+    init {
+        require(stores.isNotEmpty()) { "Pass at least one DataStore" }
+    }
 
     override val id: String = "preferences"
 
@@ -35,7 +49,7 @@ public class NectoSharedPreferencesPlugin(
 
     override fun register(necto: NectoRegistrar) {
         necto.handle("preferences.list") { input ->
-            val all = store(input["suite"]?.stringValue).all
+            val all = values(store(input["suite"]?.stringValue))
             val prefix = input["prefix"]?.stringValue.orEmpty()
             val entries = all.entries
                 .filter { prefix.isEmpty() || it.key.startsWith(prefix) }
@@ -46,53 +60,43 @@ public class NectoSharedPreferencesPlugin(
 
         necto.handle("preferences.detail") { input ->
             val key = requiredKey(input)
-            val value = store(input["suite"]?.stringValue).all[key]
+            val value = values(store(input["suite"]?.stringValue))[key]
                 ?: throw NectoBridgeError(NectoBridgeErrorCode.OPERATION_UNAVAILABLE, "No key '$key'")
             jsonObject("entry" to detail(key, value))
         }
 
         necto.handle("preferences.suites") {
-            jsonObject("suites" to jsonArray((listOf(STANDARD) + suites()).map(::jsonOf)))
+            jsonObject("suites" to jsonArray(stores.keys.map(::jsonOf)))
         }
 
         // Writing into a store a running app is reading from can change what it does next.
         necto.handle("preferences.set") { input ->
             val key = requiredKey(input)
             val value = input["value"] ?: throw invalid("value is required")
-            val preferences = store(input["suite"]?.stringValue)
-            val editor = preferences.edit()
-            write(editor, key, value, input["type"]?.stringValue, preferences.all[key])
-            if (!editor.commit()) throw NectoBridgeError(NectoBridgeErrorCode.PROVIDER_FAILED, "The value could not be saved")
-            jsonObject("entry" to detail(key, preferences.all[key]))
+            val hint = input["type"]?.stringValue
+            val store = store(input["suite"]?.stringValue)
+            val updated = store.edit { preferences ->
+                val existing = preferences.asMap().entries.firstOrNull { it.key.name == key }?.value
+                write(preferences, key, value, hint, existing)
+            }
+            val stored = updated.asMap().entries.firstOrNull { it.key.name == key }?.value
+            jsonObject("entry" to detail(key, stored))
         }
 
         necto.handle("preferences.remove") { input ->
             val key = requiredKey(input)
-            store(input["suite"]?.stringValue).edit().remove(key).commit()
+            store(input["suite"]?.stringValue).edit { preferences -> removeNamed(preferences, key) }
             jsonObject("removed" to jsonOf(true))
         }
     }
 
-    private val defaultName: String get() = "${context.packageName}_preferences"
-
-    private fun suites(): List<String> {
-        val discovered = if (discoverAll) {
-            File(context.dataDir, "shared_prefs").listFiles()
-                ?.filter { it.isFile && it.name.endsWith(".xml") }
-                ?.map { it.name.removeSuffix(".xml") }
-                .orEmpty()
-        } else {
-            emptyList()
-        }
-        return (names + discovered).distinct().filter { it != defaultName }.sorted()
+    private fun store(suite: String?): DataStore<Preferences> {
+        if (suite == null || suite == STANDARD) return stores.values.first()
+        return stores[suite] ?: throw invalid("This app does not offer the suite '$suite'")
     }
 
-    /** The default store, or a named one this plugin was told about. */
-    private fun store(suite: String?): SharedPreferences {
-        if (suite == null || suite == STANDARD) return context.getSharedPreferences(defaultName, Context.MODE_PRIVATE)
-        if (suite !in suites()) throw invalid("This app does not offer the suite '$suite'")
-        return context.getSharedPreferences(suite, Context.MODE_PRIVATE)
-    }
+    private suspend fun values(store: DataStore<Preferences>): Map<String, Any> =
+        store.data.first().asMap().mapKeys { it.key.name }
 
     public companion object {
         public const val STANDARD: String = "standard"
@@ -123,21 +127,26 @@ public class NectoSharedPreferencesPlugin(
 
         /**
          * Named for the editor the panel opens: it knows Bool, Int, Double and Array. A Long
-         * edits as an Int and a Float as a Double; [write] keeps the stored width.
+         * edits as an Int and a Float as a Double; [write] keeps the stored type.
          */
         internal fun typeName(value: Any?): String = when (value) {
             is Boolean -> "Bool"
             is Int, is Long -> "Int"
-            is Float -> "Double"
+            is Float, is Double -> "Double"
             is Set<*> -> "Array"
             is String -> "String"
+            is ByteArray -> "Data"
             else -> value?.javaClass?.simpleName ?: "Null"
         }
 
-        /** One line for simple values, pretty JSON for a string set, which is also what the editor opens. */
+        /**
+         * One line for simple values, pretty JSON for a string set, which is also what the
+         * editor opens. Bytes are described rather than rendered.
+         */
         internal fun describe(value: Any?): String = when (value) {
             null -> "null"
             is String -> value
+            is ByteArray -> "${value.size} bytes"
             is Set<*> -> {
                 val items = value.map { it.toString() }.sorted()
                 if (items.isEmpty()) "[\n\n]" else items.joinToString(",\n", "[\n", "\n]") { "  " + jsonOf(it).toJson() }
@@ -145,37 +154,46 @@ public class NectoSharedPreferencesPlugin(
             else -> value.toString()
         }
 
+        /** Drops [name] whatever its type: keys compare by name alone. */
+        internal fun removeNamed(preferences: MutablePreferences, name: String) {
+            preferences.asMap().keys.filter { it.name == name }.forEach { preferences.remove(it) }
+        }
+
         /**
-         * Stores [value] in the shape the key already has. JSON numbers are all doubles,
-         * so without the stored type an Int would come back a Float, silently.
+         * Stores [value] in the type the key already has. JSON numbers are all doubles, so
+         * without the stored type an Int would come back a Double, silently. A key of
+         * another type under the same name is replaced.
          */
-        internal fun write(editor: SharedPreferences.Editor, key: String, value: NectoJsonValue, hint: String?, existing: Any?) {
+        internal fun write(preferences: MutablePreferences, key: String, value: NectoJsonValue, hint: String?, existing: Any?) {
+            if (existing is ByteArray) throw invalid("Binary values cannot be edited")
+            removeNamed(preferences, key)
             when (value) {
-                is NectoJsonValue.Bool -> editor.putBoolean(key, value.value)
+                is NectoJsonValue.Bool -> preferences[booleanPreferencesKey(key)] = value.value
                 is NectoJsonValue.Number -> {
                     val number = value.value
                     val integral = value.isInteger
                     when {
-                        existing is Long -> editor.putLong(key, integerOrThrow(number, integral).toLong())
-                        existing is Float -> editor.putFloat(key, number.toFloat())
+                        existing is Long -> preferences[longPreferencesKey(key)] = integerOrThrow(number, integral).toLong()
+                        existing is Float -> preferences[floatPreferencesKey(key)] = number.toFloat()
+                        existing is Double -> preferences[doublePreferencesKey(key)] = number
                         existing is Int || (existing == null && (hint == "Int" || (hint == null && integral))) -> {
                             val integer = integerOrThrow(number, integral)
                             if (integer in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) {
-                                editor.putInt(key, integer.toInt())
+                                preferences[intPreferencesKey(key)] = integer.toInt()
                             } else {
-                                editor.putLong(key, integer.toLong())
+                                preferences[longPreferencesKey(key)] = integer.toLong()
                             }
                         }
-                        else -> editor.putFloat(key, number.toFloat())
+                        else -> preferences[doublePreferencesKey(key)] = number
                     }
                 }
-                is NectoJsonValue.Str -> editor.putString(key, value.value)
+                is NectoJsonValue.Str -> preferences[stringPreferencesKey(key)] = value.value
                 is NectoJsonValue.Array -> {
-                    val strings = value.values.map { it.stringValue ?: throw invalid("SharedPreferences stores sets of strings only") }
-                    editor.putStringSet(key, strings.toSet())
+                    val strings = value.values.map { it.stringValue ?: throw invalid("DataStore stores sets of strings only") }
+                    preferences[stringSetPreferencesKey(key)] = strings.toSet()
                 }
-                is NectoJsonValue.Object -> throw invalid("SharedPreferences cannot store a dictionary")
-                NectoJsonValue.Null -> editor.remove(key)
+                is NectoJsonValue.Object -> throw invalid("DataStore Preferences cannot store a dictionary")
+                NectoJsonValue.Null -> Unit
             }
         }
 

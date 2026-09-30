@@ -2,6 +2,8 @@ package io.github.easyhooon.necto.android
 
 import android.app.Application
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import io.github.easyhooon.necto.plugins.NectoEventsPlugin
 import io.github.easyhooon.necto.plugins.NectoFilesPlugin
 import io.github.easyhooon.necto.plugins.NectoMetric
@@ -13,18 +15,20 @@ import io.github.easyhooon.necto.sdk.NectoPlugin
 /** Factories for the plugins Necto ships, wired to Android. */
 public object NectoAndroidPlugins {
     /**
-     * Every shipped plugin: events, network, SharedPreferences, files, process performance
-     * and UI Control. Pass in the [events] and [network] plugins the app reports to, such
-     * as the one a `NectoOkHttpInterceptor` feeds.
+     * Every shipped plugin: events, network, DataStore preferences, files, process
+     * performance and UI Control. Pass in the [events] and [network] plugins the app
+     * reports to, such as the one a `NectoOkHttpInterceptor` feeds, and the app's own
+     * [dataStores] by name; the preferences plugin is left out when there are none.
      */
     public fun defaults(
         context: Context,
         events: NectoEventsPlugin = NectoEventsPlugin(),
         network: NectoNetworkPlugin = NectoNetworkPlugin(),
-    ): List<NectoPlugin> = listOf(
+        dataStores: Map<String, DataStore<Preferences>> = emptyMap(),
+    ): List<NectoPlugin> = listOfNotNull(
         events,
         network,
-        NectoSharedPreferencesPlugin(context),
+        dataStores.takeIf { it.isNotEmpty() }?.let(::NectoDataStorePreferencesPlugin),
         files(context),
         performance(context),
         control(context),
