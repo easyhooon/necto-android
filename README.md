@@ -1,0 +1,76 @@
+# necto-android
+
+[Necto](https://github.com/toss/necto)(iOS 디버깅 플랫폼)의 **앱 내장 SDK를 Android로 포팅**한 라이브러리.
+Mac의 Necto 앱과 웹 패널은 그대로 쓰고, Android 앱이 iOS 앱과 같은 프로토콜(v1)로 붙는다.
+
+## 연결 방식
+
+SDK가 앱 안에서 `127.0.0.1:9979`(점유 시 9986까지)를 listen하고, Mac의 Necto는 시뮬레이터용으로 loopback 포트를 계속 probe한다.
+따라서 **Mac 앱 수정 없이** adb 포워딩만 하면 된다.
+
+```bash
+adb forward tcp:9979 tcp:9979
+```
+
+핸드셰이크의 `simulatorID`에 `android:<ANDROID_ID>`를 넣어 기기별로 구분된다. 두 기기를 동시에 붙이려면 두 번째 기기는 다른 로컬 포트(예: `adb -s <serial> forward tcp:9980 tcp:9979`)로 포워딩.
+
+## 모듈
+
+| 모듈 | 내용 | iOS 대응 |
+| --- | --- | --- |
+| `necto-core` (순수 JVM) | 프로토콜 모델·JSON·스키마 검증, 길이 프리픽스 소켓 전송, SDK 런타임(코루틴), Events·Network·Performance·Files·UI Control 플러그인 공통부, 웹 패널 | `NectoModel`, `NectoTransport`, `NectoSDK`, `NectoDefaultPlugins` |
+| `necto-android` | Context 기반 앱 identity, SharedPreferences 플러그인, 프로세스 성능 샘플러(CPU·PSS·FPS·스레드), View 기반 UI Control, 기본 Files 루트 | `NectoProcessMetrics`, UIKit 부분 |
+| `necto-okhttp` | OkHttp `Interceptor`로 네트워크 캡처 | `NectoURLSessionCapture` |
+
+## 사용법
+
+```kotlin
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        if (BuildConfig.DEBUG) {
+            val events = NectoEventsPlugin()
+            val network = NectoNetworkPlugin()
+            NectoAndroid.start(this, NectoAndroidPlugins.defaults(this, events, network))
+
+            okHttpClient = OkHttpClient.Builder()
+                .addInterceptor(NectoOkHttpInterceptor(network))
+                .build()
+            events.report(NectoEvent(NectoEvent.Level.INFO, "App", "started"))
+        }
+    }
+}
+```
+
+커스텀 플러그인은 iOS와 동일한 형태:
+
+```kotlin
+class ThingsPlugin : NectoPlugin {
+    override val id = "com.example.things"
+    override fun register(necto: NectoRegistrar) {
+        necto.handle("things.list") { jsonObject("things" to jsonArray(...)) }
+        necto.stream("things.observe") { _, out -> changes.collect { out.send(it) } }
+    }
+}
+```
+
+## iOS와 다른 점
+
+- Preferences: `UserDefaults` 대신 `SharedPreferences`. `standard` = `<package>_preferences`, 그 외 파일은 `names`로 지정하거나 `discoverAll = true`. Long/Float는 패널에서 Int/Double로 편집되고 저장 시 원래 타입 유지.
+- Files 루트: `files`, `cache`, `data`(shared_prefs·databases 포함), `external`, `external-cache`.
+- Performance: `memory` = total PSS, `resident-memory` = VmRSS, `compressed-memory` = VmSwap(zram), 추가로 `java-heap`, `native-heap`.
+- UI Control: View 트리 기반. 좌표는 px. back은 시스템 BACK 키(`method: "backKey"`). Compose 내부 요소와 다이얼로그/팝업 창은 아직 대상이 아님.
+- 패널은 Java 리소스(`necto/panels/<id>` + 빌드 시 생성되는 `files.txt` 인덱스)로 패키징.
+
+## 빌드
+
+```bash
+./gradlew build                          # 전체 (Google Maven 필요)
+./gradlew -Pnecto.skipAndroid=true test  # JVM 모듈만
+```
+
+minSdk 26, compileSdk 35, Kotlin 2.0.21, AGP 8.7.3.
+
+## 라이선스
+
+MIT. 원본 Necto © Viva Republica, Inc. — `LICENSE`, `NOTICE` 참고.

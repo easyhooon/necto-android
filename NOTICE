@@ -1,0 +1,6 @@
+necto-android is an Android port of Necto (https://github.com/toss/necto),
+MIT License, Copyright (c) 2026 Viva Republica, Inc. See LICENSE.
+
+The web panels in necto-core/src/main/panels are copied from Necto's
+Sources/NectoDefaultPlugins/Panels. The manifests of the preferences and control
+panels were adjusted for Android wording; the panel code is unchanged.

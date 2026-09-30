@@ -1,0 +1,61 @@
+package io.github.easyhooon.necto.android
+
+import android.app.Application
+import android.content.Context
+import io.github.easyhooon.necto.plugins.NectoEventsPlugin
+import io.github.easyhooon.necto.plugins.NectoFilesPlugin
+import io.github.easyhooon.necto.plugins.NectoMetric
+import io.github.easyhooon.necto.plugins.NectoNetworkPlugin
+import io.github.easyhooon.necto.plugins.NectoPerformancePlugin
+import io.github.easyhooon.necto.plugins.NectoUIControlPlugin
+import io.github.easyhooon.necto.sdk.NectoPlugin
+
+/** Factories for the plugins Necto ships, wired to Android. */
+public object NectoAndroidPlugins {
+    /**
+     * Every shipped plugin: events, network, SharedPreferences, files, process performance
+     * and UI Control. Pass in the [events] and [network] plugins the app reports to, such
+     * as the one a `NectoOkHttpInterceptor` feeds.
+     */
+    public fun defaults(
+        context: Context,
+        events: NectoEventsPlugin = NectoEventsPlugin(),
+        network: NectoNetworkPlugin = NectoNetworkPlugin(),
+    ): List<NectoPlugin> = listOf(
+        events,
+        network,
+        NectoSharedPreferencesPlugin(context),
+        files(context),
+        performance(context),
+        control(context),
+    )
+
+    /** The app's files, cache, data directory and external files, each browsable. */
+    public fun files(context: Context, extraRoots: List<NectoFilesPlugin.Root> = emptyList()): NectoFilesPlugin {
+        val roots = buildList {
+            add(NectoFilesPlugin.Root("files", "files", context.filesDir))
+            add(NectoFilesPlugin.Root("cache", "cache", context.cacheDir))
+            // shared_prefs, databases and no_backup live here.
+            add(NectoFilesPlugin.Root("data", "data", context.dataDir))
+            context.getExternalFilesDir(null)?.let { add(NectoFilesPlugin.Root("external", "external files", it)) }
+            context.externalCacheDir?.let { add(NectoFilesPlugin.Root("external-cache", "external cache", it)) }
+            addAll(extraRoots)
+        }
+        return NectoFilesPlugin(roots)
+    }
+
+    /** CPU, memory, frame rate and thread count, sampled only while a panel watches. */
+    public fun performance(context: Context, metrics: List<NectoMetric> = emptyList()): NectoPerformancePlugin =
+        NectoPerformancePlugin(metrics, NectoAndroidProcessSampler(context))
+
+    /** Tap, type, swipe and go back in the foreground activity's View hierarchy. */
+    public fun control(context: Context): NectoUIControlPlugin {
+        NectoAndroid.track(context.applicationContext as Application)
+        val runtime = NectoAndroidControlRuntime { NectoAndroid.currentActivity }
+        return NectoUIControlPlugin(
+            actionTargets = { runtime.snapshot() },
+            readAccessibility = { runtime.readAccessibility() },
+            action = { operation, input -> runtime.perform(operation, input) },
+        )
+    }
+}
