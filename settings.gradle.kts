@@ -34,4 +34,5 @@ include(":necto-okhttp")
 // -Pnecto.skipAndroid=true where that is unreachable to build the JVM modules alone.
 if (providers.gradleProperty("necto.skipAndroid").orNull != "true") {
     include(":necto-android")
+    include(":sample")
 }
