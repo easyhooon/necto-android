@@ -68,6 +68,20 @@ class ThingsPlugin : NectoPlugin {
 - UI Control: View 트리와 Jetpack Compose semantics 트리를 함께 읽는다(Compose는 앱에 있을 때만, `compileOnly` 의존). 좌표는 px. back은 시스템 BACK 키(`method: "backKey"`). 터치를 받지 않는 오버레이(edge-to-edge의 `ProtectionLayout` 등)는 가림으로 보지 않는다. 다이얼로그/팝업 창은 아직 대상이 아님.
 - 패널은 Java 리소스(`necto/panels/<id>` + 빌드 시 생성되는 `files.txt` 인덱스)로 패키징.
 
+## 샘플 앱
+
+`sample`은 Necto의 iOS `ExampleApp`을 화면 단위로 옮긴 앱 (Jetpack Compose, 하단 탭 5개).
+
+| 탭 | 내용 | iOS 대응 |
+| --- | --- | --- |
+| Connection | SDK 상태(포트·연결 앱)·프로토콜 버전, listen 중지/시작 | `ConnectionView` |
+| Network | 앱 안의 loopback REST 서버(`LocalApi`)로 보내는 샘플 요청(GET·POST·PATCH·DELETE, 큰 응답, 느린 응답, 404, 500, DNS 실패) | `NetworkView`, `LocalAPI` |
+| Control | UI Control fixture. Compose와 View(`AndroidView`) 두 벌을 칩으로 전환, 레이블·식별자(`poc.*`)는 iOS와 동일 | `ControlFixtureController` |
+| Accessibility | Compose fixture(`ax.*`): 카운터, 비활성 버튼, 입력란, detail, sheet, 커스텀 스크롤 | `AccessibilityFixture` |
+| About | SDK·프로토콜 버전 | `AboutView` |
+
+앱 operation을 받는 커스텀 플러그인 `plugin-sample`(`com.example.app.state`, `com.example.app.counter`)은 iOS와 같은 웹 패널을 Java 리소스(`sample/src/main/resources/panels/plugin-sample`)로 함께 싣는다. 실행 시 DataStore Preferences와 `files/`에 예시 값·파일을 채운다.
+
 ## 빌드
 
 ```bash

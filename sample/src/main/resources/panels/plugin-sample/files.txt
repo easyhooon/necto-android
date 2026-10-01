@@ -1,0 +1,4 @@
+assets/index.css
+assets/index.js
+index.html
+manifest.json
