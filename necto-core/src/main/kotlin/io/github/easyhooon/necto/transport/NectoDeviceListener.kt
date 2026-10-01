@@ -33,7 +33,9 @@ public class NectoDeviceListener(port: Int = DEFAULT_PORT) {
             try {
                 // Allows an immediate restart after the app relaunches.
                 socket.reuseAddress = true
-                socket.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), storedPort), 4)
+                // IPv4 on purpose, like the iOS SDK: Android's getLoopbackAddress() is ::1,
+                // while adb forward dials 127.0.0.1 on the device.
+                socket.bind(InetSocketAddress(IPV4_LOOPBACK, storedPort), 4)
             } catch (error: IOException) {
                 runCatching { socket.close() }
                 throw CannotListenException(error.message ?: error.toString(), error)
@@ -64,6 +66,8 @@ public class NectoDeviceListener(port: Int = DEFAULT_PORT) {
     }
 
     public companion object {
+        private val IPV4_LOOPBACK: InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+
         /** The port Necto uses. */
         public const val DEFAULT_PORT: Int = NectoTransportDefaults.DEVICE_PORT
 
