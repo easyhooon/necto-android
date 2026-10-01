@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -76,5 +77,58 @@ class NectoOkHttpInterceptorTest {
         }
         assertEquals(NectoNetworkRecord.State.FAILED, records.last().state)
         assertTrue(records.last().errorSummary!!.isNotEmpty())
+    }
+
+    @Test
+    fun slowStreamsReachTheAppWithoutWaitingForTheCaptureLimit() {
+        // 1 KB a second: waiting for 512 KB up front would take minutes.
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/event-stream")
+                .setBody("data: first\n\n" + "x".repeat(64 * 1024))
+                .throttleBody(1024, 1, TimeUnit.SECONDS),
+        )
+        val started = System.nanoTime()
+        client.newCall(Request.Builder().url(server.url("/events")).build()).execute().use { response ->
+            assertEquals("data: first", response.body!!.source().readUtf8Line())
+        }
+        assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5), "the first event arrives at once")
+        val completed = records.last()
+        assertEquals(NectoNetworkRecord.State.COMPLETED, completed.state)
+        assertTrue(completed.responseBody!!.text!!.startsWith("data: first"))
+    }
+
+    @Test
+    fun largeUploadsAreCountedButCapped() {
+        server.enqueue(MockResponse())
+        val size = NectoNetworkRecord.Body.CAPTURE_LIMIT * 3
+        val request = Request.Builder().url(server.url("/upload"))
+            .post(ByteArray(size).toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        client.newCall(request).execute().close()
+        val body = records.last().requestBody!!
+        assertTrue(body.isTruncated)
+        assertEquals(size.toLong(), body.byteCount)
+    }
+
+    @Test
+    fun runtimeExceptionsFromLaterInterceptorsAreReportedAsFailures() {
+        val failing = OkHttpClient.Builder()
+            .addInterceptor(NectoOkHttpInterceptor(reporter))
+            .addInterceptor { throw IllegalStateException("boom") }
+            .build()
+        assertFailsWith<IllegalStateException> {
+            failing.newCall(Request.Builder().url(server.url("/x")).build()).execute()
+        }
+        assertEquals(NectoNetworkRecord.State.FAILED, records.last().state)
+    }
+
+    @Test
+    fun bodiesClosedUnreadAreStillCaptured() {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/plain").setBody("hello"))
+        val code = client.newCall(Request.Builder().url(server.url("/status-only")).build()).execute().use { it.code }
+        assertEquals(200, code)
+        val completed = records.last()
+        assertEquals("hello", completed.responseBody?.text)
+        assertEquals(5L, completed.responseByteCount)
     }
 }
