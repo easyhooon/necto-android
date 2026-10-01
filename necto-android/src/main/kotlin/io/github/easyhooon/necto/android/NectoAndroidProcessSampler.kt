@@ -25,7 +25,8 @@ import kotlin.math.roundToLong
  * - `cpu`: process CPU time over wall time, summed across threads like iOS (can pass 100%).
  * - `memory`: total PSS, the closest Android analogue of the iOS physical footprint.
  * - `resident-memory` / `compressed-memory`: VmRSS and VmSwap (zram is compressed).
- * - `fps`: Choreographer frame callbacks per second while sampling.
+ * - `fps`: Choreographer frame callbacks per second while sampling, left out of a
+ *   reading until the first full second has been counted.
  */
 public class NectoAndroidProcessSampler(context: Context) : NectoPerformanceSampling {
     private val context = context.applicationContext
@@ -69,20 +70,22 @@ public class NectoAndroidProcessSampler(context: Context) : NectoPerformanceSamp
         val nativeHeap = megabytes(Debug.getNativeHeapAllocatedSize())
 
         return NectoPerformanceReading(
-            values = mapOf(
-                "cpu" to cpu,
-                "memory" to memory,
-                "fps" to fps,
-                "threads" to threads,
-                "resident-memory" to resident,
-                "compressed-memory" to compressed,
-                "java-heap" to javaHeap,
-                "native-heap" to nativeHeap,
-            ),
+            values = buildMap {
+                put("cpu", cpu)
+                put("memory", memory)
+                // No frame rate until a full second has been counted: a 0 would draw a
+                // false drop and flag the budget on every panel that just opened.
+                fps?.let { put("fps", it) }
+                put("threads", threads)
+                put("resident-memory", resident)
+                put("compressed-memory", compressed)
+                put("java-heap", javaHeap)
+                put("native-heap", nativeHeap)
+            },
             snapshot = jsonObject(
                 "cpu" to jsonOf(cpu),
                 "memoryMB" to jsonOf(memory),
-                "fps" to jsonOf(fps),
+                "fps" to jsonOf(fps ?: 0.0),
                 "threads" to jsonOf(threads),
                 "residentMemoryMB" to jsonOf(resident),
                 "compressedMemoryMB" to jsonOf(compressed),
@@ -156,43 +159,44 @@ public class NectoAndroidProcessSampler(context: Context) : NectoPerformanceSamp
 
     private fun megabytesFromKilobytes(kilobytes: Long?): Double =
         kilobytes?.let { (it / 1024.0 * 10).roundToLong() / 10.0 } ?: 0.0
+}
 
-    /** Counts frames on the main thread. Touched only from the main thread. */
-    private class FrameRateMonitor : Choreographer.FrameCallback {
-        private var running = false
-        private var firstFrameNanos = 0L
-        private var frames = 0
-        var framesPerSecond = 0.0
-            private set
+/** Counts frames on the main thread. Touched only from the main thread. */
+internal class FrameRateMonitor : Choreographer.FrameCallback {
+    private var running = false
+    private var firstFrameNanos = 0L
+    private var frames = 0
+    /** Null until a full second of frames has been counted since [start]. */
+    var framesPerSecond: Double? = null
+        private set
 
-        fun start() {
-            stop()
-            running = true
-            Choreographer.getInstance().postFrameCallback(this)
-        }
+    fun start() {
+        stop()
+        running = true
+        Choreographer.getInstance().postFrameCallback(this)
+    }
 
-        fun stop() {
-            running = false
-            Choreographer.getInstance().removeFrameCallback(this)
-            firstFrameNanos = 0
-            frames = 0
-            framesPerSecond = 0.0
-        }
+    fun stop() {
+        running = false
+        Choreographer.getInstance().removeFrameCallback(this)
+        firstFrameNanos = 0
+        frames = 0
+        framesPerSecond = null
+    }
 
-        override fun doFrame(frameTimeNanos: Long) {
-            if (!running) return
-            if (firstFrameNanos == 0L) {
+    override fun doFrame(frameTimeNanos: Long) {
+        if (!running) return
+        if (firstFrameNanos == 0L) {
+            firstFrameNanos = frameTimeNanos
+        } else {
+            frames++
+            val elapsed = (frameTimeNanos - firstFrameNanos) / 1_000_000_000.0
+            if (elapsed >= 1) {
+                framesPerSecond = (frames / elapsed * 10).roundToLong() / 10.0
+                frames = 0
                 firstFrameNanos = frameTimeNanos
-            } else {
-                frames++
-                val elapsed = (frameTimeNanos - firstFrameNanos) / 1_000_000_000.0
-                if (elapsed >= 1) {
-                    framesPerSecond = (frames / elapsed * 10).roundToLong() / 10.0
-                    frames = 0
-                    firstFrameNanos = frameTimeNanos
-                }
             }
-            Choreographer.getInstance().postFrameCallback(this)
         }
+        Choreographer.getInstance().postFrameCallback(this)
     }
 }
