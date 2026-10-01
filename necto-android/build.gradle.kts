@@ -1,6 +1,7 @@
 plugins {
     id("com.android.library")
     kotlin("android")
+    `maven-publish`
 }
 
 android {
@@ -11,6 +12,12 @@ android {
         // java.util.Base64 and file creation times need API 26.
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
     }
 
     compileOptions {
@@ -30,4 +37,13 @@ dependencies {
     api(project(":necto-core"))
     api("androidx.datastore:datastore-preferences-core:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("release") {
+            artifactId = project.name
+            afterEvaluate { from(components["release"]) }
+        }
+    }
 }

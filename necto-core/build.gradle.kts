@@ -1,9 +1,11 @@
 plugins {
     kotlin("jvm")
     `java-library`
+    `maven-publish`
 }
 
 java {
+    withSourcesJar()
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
 }
@@ -50,4 +52,13 @@ val generatePanelResources by tasks.registering {
 
 sourceSets.main {
     resources.srcDir(generatePanelResources)
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            artifactId = project.name
+            from(components["java"])
+        }
+    }
 }
