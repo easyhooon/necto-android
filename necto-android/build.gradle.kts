@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library") version "8.7.3"
+    id("com.android.library")
     kotlin("android")
 }
 

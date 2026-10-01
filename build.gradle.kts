@@ -1,6 +1,8 @@
 plugins {
-    // Declared once so every module shares the same Kotlin Gradle Plugin. The Android
-    // Gradle Plugin is declared in necto-android alone, so the JVM modules build without it.
+    // Declared once so every module shares the same plugin classloader. The Android Gradle
+    // Plugin must sit next to the Kotlin Gradle Plugin here, otherwise KGP cannot see AGP
+    // classes (BaseVariant) when kotlin("android") is applied in necto-android.
+    id("com.android.library") version "8.7.3" apply false
     kotlin("jvm") version "2.0.21" apply false
     kotlin("android") version "2.0.21" apply false
 }
