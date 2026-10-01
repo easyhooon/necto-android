@@ -29,14 +29,25 @@ public class NectoAndroidAppIdentity(context: Context) : NectoAppIdentity {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull().orEmpty()
 
-    /** The name the person gave the device, when it has one; otherwise the model. */
+    /**
+     * The name the person gave the device, when it has one, otherwise the model, followed
+     * by the Android version. The version rides here because the host labels [osVersion]
+     * as iOS.
+     */
     override val deviceName: String
-        get() = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+        get() {
+            val name = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+            return "$name · Android ${Build.VERSION.RELEASE}"
+        }
 
-    override val osVersion: String get() = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+    /**
+     * Left empty on purpose: Necto 0.2.0 prints any non-empty value as "iOS <value>"
+     * (NectoSidebar.swift), and with nothing to print it shows no OS at all.
+     */
+    override val osVersion: String get() = ""
 
     /** The launcher icon as PNG, at most [ICON_SIZE] pixels square. */
     override val appIcon: ByteArray?
