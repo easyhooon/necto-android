@@ -4,7 +4,7 @@
 
 > 비공식 프로젝트예요. 토스(Viva Republica)가 만들거나 관리하지 않아요.
 
-![Necto Mac 앱에서 sample 앱을 조작하는 모습: Control의 탭과 텍스트 입력이 폰에 반영되고, 이어서 Performance 패널](docs/media/demo.gif)
+![Necto Mac 앱에서 본 sample 앱: Network, DataStore, Files 패널, Control의 탭과 텍스트 입력이 폰에 반영되는 모습, Performance 패널](docs/media/demo.gif)
 
 [Necto](https://github.com/toss/necto)(iOS 디버깅 플랫폼)의 **앱 내장 SDK를 Android로 포팅**한 라이브러리.
 Mac의 Necto 앱과 웹 패널은 그대로 쓰고, Android 앱이 iOS 앱과 같은 프로토콜(v1)로 붙는다.

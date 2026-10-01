@@ -4,7 +4,7 @@ English | [한국어](README-ko.md)
 
 > An unofficial project. It is not made or maintained by Toss (Viva Republica).
 
-![Driving the sample app from the Necto Mac app: Control taps and text input reach the phone, then the Performance panel](docs/media/demo.gif)
+![The sample app in the Necto Mac app: Network, DataStore and Files panels, then Control taps and text input reaching the phone, then Performance](docs/media/demo.gif)
 
 An Android port of the app-side SDK of [Necto](https://github.com/toss/necto), the iOS
 debugging platform. Android apps connect to the unchanged Necto Mac app over the same
