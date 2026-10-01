@@ -64,7 +64,8 @@ class ThingsPlugin : NectoPlugin {
 - Preferences: `UserDefaults` 대신 Jetpack DataStore Preferences. DataStore는 파일당 인스턴스 하나만 허용되므로 앱이 가진 인스턴스를 이름과 함께 넘김 (`dataStores = mapOf("settings" to context.settings)`). 첫 번째가 기본 store. Long/Float는 패널에서 Int/Double로 편집되고 저장 시 원래 타입 유지. ByteArray 값은 읽기 전용.
 - Files 루트: `files`, `cache`, `data`(shared_prefs·databases 포함), `external`, `external-cache`.
 - Performance: `memory` = total PSS, `resident-memory` = VmRSS, `compressed-memory` = VmSwap(zram), 추가로 `java-heap`, `native-heap`.
-- UI Control: View 트리 기반. 좌표는 px. back은 시스템 BACK 키(`method: "backKey"`). Compose 내부 요소와 다이얼로그/팝업 창은 아직 대상이 아님.
+- 기기 표시: Necto Mac 앱은 `osVersion`을 항상 "iOS ..."로 표시하므로 `osVersion`은 비워 두고, Android 버전은 기기 이름 뒤에 붙인다 (예: `지훈의 S25+ · Android 17`).
+- UI Control: View 트리와 Jetpack Compose semantics 트리를 함께 읽는다(Compose는 앱에 있을 때만, `compileOnly` 의존). 좌표는 px. back은 시스템 BACK 키(`method: "backKey"`). 터치를 받지 않는 오버레이(edge-to-edge의 `ProtectionLayout` 등)는 가림으로 보지 않는다. 다이얼로그/팝업 창은 아직 대상이 아님.
 - 패널은 Java 리소스(`necto/panels/<id>` + 빌드 시 생성되는 `files.txt` 인덱스)로 패키징.
 
 ## 빌드
