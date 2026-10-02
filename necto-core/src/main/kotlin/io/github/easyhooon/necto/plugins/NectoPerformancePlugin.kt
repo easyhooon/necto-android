@@ -9,6 +9,8 @@ import io.github.easyhooon.necto.model.jsonOf
 import io.github.easyhooon.necto.sdk.NectoPlugin
 import io.github.easyhooon.necto.sdk.NectoPluginPanel
 import io.github.easyhooon.necto.sdk.NectoRegistrar
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -191,7 +193,12 @@ public class NectoPerformancePlugin(
  */
 private class NectoPerformanceMonitor(private val sampler: NectoPerformanceSampling) {
     private val mutex = Mutex()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // A sampler belongs to the app, and a failure in it must never reach the app's
+    // uncaught exception handler: the loop stops, and this is the last line of defense.
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, error -> System.err.println("Necto: the performance sampler failed: $error") },
+    )
     private val subscriptions = LinkedHashMap<Any, Double>()
     private var receive: ((NectoPerformanceReading) -> Unit)? = null
     private var running: Job? = null
@@ -216,14 +223,19 @@ private class NectoPerformanceMonitor(private val sampler: NectoPerformanceSampl
 
     private fun start(interval: Double, receive: (NectoPerformanceReading) -> Unit) {
         running = scope.launch {
-            sampler.start()
             try {
+                sampler.start()
                 while (isActive) {
                     receive(sampler.snapshot())
                     delay((interval * 1000).toLong())
                 }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // Sampling stops; the app goes on. Subscribers see the stream go quiet.
+                System.err.println("Necto: the performance sampler failed: $error")
             } finally {
-                withContext(NonCancellable) { sampler.stop() }
+                withContext(NonCancellable) { runCatching { sampler.stop() } }
             }
         }
     }

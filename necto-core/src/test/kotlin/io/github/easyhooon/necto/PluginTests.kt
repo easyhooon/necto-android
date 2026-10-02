@@ -9,10 +9,14 @@ import io.github.easyhooon.necto.plugins.NectoControlGeometry
 import io.github.easyhooon.necto.plugins.NectoFilesPlugin
 import io.github.easyhooon.necto.plugins.NectoMetric
 import io.github.easyhooon.necto.plugins.NectoPerformancePlugin
+import io.github.easyhooon.necto.plugins.NectoPerformanceReading
+import io.github.easyhooon.necto.plugins.NectoPerformanceSampling
 import io.github.easyhooon.necto.plugins.NectoPoint
 import io.github.easyhooon.necto.plugins.NectoRect
 import io.github.easyhooon.necto.sdk.NectoPlugin
 import io.github.easyhooon.necto.sdk.NectoRegistrar
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Files
@@ -84,6 +88,34 @@ class PluginTests {
         val bytes = "가나".toByteArray()
         assertEquals("가", NectoFilesPlugin.decodeUtf8Head(bytes.copyOf(4), isComplete = false))
         assertEquals(null, NectoFilesPlugin.decodeUtf8Head(bytes.copyOf(4), isComplete = true))
+    }
+
+    @Test
+    fun aFailingSamplerStopsSamplingWithoutCrashingTheApp() = runBlocking {
+        val uncaught = mutableListOf<Throwable>()
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, error -> synchronized(uncaught) { uncaught += error } }
+        try {
+            var stopped = false
+            val sampler = object : NectoPerformanceSampling {
+                override val metrics = listOf(NectoMetric("fps", "Frame rate", "fps"))
+                override suspend fun start() = Unit
+                override suspend fun stop() { stopped = true }
+                override suspend fun snapshot(): NectoPerformanceReading = error("sampler bug")
+                override suspend fun detail(): NectoJsonValue = jsonObject()
+            }
+            val registrar = NectoRegistrar().also(NectoPerformancePlugin(sampler = sampler)::register)
+            val observe = registrar.registrations.getValue("necto.device.performance.observe@1").body as NectoRegistrar.Body.Stream
+
+            val subscriber = launch { observe.run(jsonObject("interval" to jsonOf(0.1))) { } }
+            delay(500)
+            subscriber.cancel()
+
+            assertTrue(stopped, "the sampler is stopped after it fails")
+            assertTrue(uncaught.isEmpty(), "nothing reached the uncaught exception handler: $uncaught")
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previous)
+        }
     }
 
     @Test
