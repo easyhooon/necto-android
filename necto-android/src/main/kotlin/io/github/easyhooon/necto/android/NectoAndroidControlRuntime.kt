@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.WeakHashMap
 
@@ -62,11 +63,19 @@ internal class NectoAndroidControlRuntime(private val activity: () -> Activity?)
     private val composeIdentities = WeakHashMap<View, HashMap<Int, String>>()
     private var performing = false
 
-    suspend fun snapshot(): List<NectoControlTarget> = onMain {
+    /**
+     * Visible frames for the pass in progress. A pass hit-tests every candidate from the
+     * root, so without this each view's frame was measured again for every other view.
+     */
+    private var frameCache: IdentityHashMap<View, NectoRect?>? = null
+
+    suspend fun snapshot(): List<NectoControlTarget> = onMain { cachingFrames { discover() } }
+
+    private fun discover(): List<NectoControlTarget> {
         targets.clear()
-        val root = rootView() ?: return@onMain emptyList()
-        if (performing) return@onMain emptyList()
-        entries(root).flatMap { (view, frame) ->
+        val root = rootView() ?: return emptyList()
+        if (performing) return emptyList()
+        return entries(root).flatMap { (view, frame) ->
             if (view !== root && isComposeHost(view)) composeTargets(root, view) else listOfNotNull(viewTarget(root, view, frame))
         }
     }
@@ -354,7 +363,7 @@ internal class NectoAndroidControlRuntime(private val activity: () -> Activity?)
         return runCatching { view.resources.getResourceEntryName(view.id) }.getOrNull()
     }
 
-    private fun readItems(root: View): List<NectoAccessibilityItem> {
+    private fun readItems(root: View): List<NectoAccessibilityItem> = cachingFrames {
         val items = ArrayList<NectoAccessibilityItem>()
         fun walk(view: View) {
             if (!isVisible(view) || isHiddenFromAccessibility(view)) return
@@ -376,7 +385,7 @@ internal class NectoAndroidControlRuntime(private val activity: () -> Activity?)
             if (!secure && view is ViewGroup) for (index in 0 until view.childCount) walk(view.getChildAt(index))
         }
         walk(root)
-        return items
+        items
     }
 
     private fun role(view: View): String = when {
@@ -404,6 +413,22 @@ internal class NectoAndroidControlRuntime(private val activity: () -> Activity?)
      */
     @Suppress("UNUSED_PARAMETER")
     private fun visibleFrame(view: View, root: View): NectoRect? {
+        val cache = frameCache ?: return measureFrame(view)
+        return if (cache.containsKey(view)) cache[view] else measureFrame(view).also { cache[view] = it }
+    }
+
+    /** Runs [block] with frames measured once per view, unless a pass is already caching. */
+    private inline fun <T> cachingFrames(block: () -> T): T {
+        if (frameCache != null) return block()
+        frameCache = IdentityHashMap()
+        try {
+            return block()
+        } finally {
+            frameCache = null
+        }
+    }
+
+    private fun measureFrame(view: View): NectoRect? {
         val rect = Rect()
         if (!view.getGlobalVisibleRect(rect)) return null
         return NectoRect(rect.left.toDouble(), rect.top.toDouble(), rect.width().toDouble(), rect.height().toDouble())
