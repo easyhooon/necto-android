@@ -18,9 +18,9 @@ of a pull request, and update it when behavior changes.
 
 | Module | Tests | What they cover |
 | --- | --- | --- |
-| necto-core | 19 | Protocol models and JSON, schema validation, SDK runtime, plugin behavior |
+| necto-core | 21 | Protocol models and JSON, schema validation, SDK runtime, plugin behavior; panels read once, off the registering thread; a failing performance sampler stops without reaching the app's uncaught exception handler |
 | necto-okhttp | 7 | Request and response capture, capped large bodies, failures and `RuntimeException`s, streams that are not held back, bodies closed unread, large uploads |
-| necto-android | 7 (Robolectric) | UI Control on Views and Compose: listing with labels, test tags, values and secure fields; tap, text input (replace and append) and swipe on Compose; a touch-transparent full-window overlay does not hide content, while a clickable one does |
+| necto-android | 9 (Robolectric) | UI Control on Views and Compose: listing with labels, test tags, values and secure fields; tap, text input (replace and append) and swipe on Compose; a touch-transparent full-window overlay does not hide content, while a clickable one does. The frame rate is left out until a full second has been measured |
 
 The overlay test fails when the hit test treats every visible view as a blocker,
 which was the regression found on the production app.
