@@ -51,14 +51,21 @@ internal class NectoSdkRuntime(
     private val registered = ArrayList<NectoPlugin>()
     private val registeringIDs = HashSet<String>()
     private val requests = HashMap<String, Pair<Any, Job>>()
-    private var registrationUpdates: Channel<NectoPluginRegistration>? = null
+    /** IDs of plugins whose registration changed while connected. */
+    private var registrationUpdates: Channel<String>? = null
     private var registrationWriter: Job? = null
 
     /** What each plugin answers, read from `register` when it was added. */
     private val handlers = HashMap<String, Map<String, NectoRegistrar.Registration>>()
 
-    /** Panels read once at registration, held whole. */
+    /**
+     * Where each plugin's panel comes from. A panel is read the first time a host needs
+     * it, off the thread that registered the plugin (usually the main thread during app
+     * start), then held whole.
+     */
+    private val panelSources = HashMap<String, NectoPluginPanel>()
     private val panels = HashMap<String, NectoPanelArchive>()
+    private val unreadablePanels = HashSet<String>()
 
     @Volatile
     var identity: NectoAppIdentity = NectoJvmAppIdentity
@@ -89,20 +96,13 @@ internal class NectoSdkRuntime(
             if (collector.hasDuplicateContracts) return false
             val registrations = collector.registrations.toMap()
 
-            // A panel that fails to read is a build problem: say so where the developer is.
-            val archive = plugin.panel?.let { panel ->
-                runCatching { panel.read() }
-                    .onFailure { System.err.println("Necto: the panel of '$id' could not be read: $it") }
-                    .getOrNull()
-            }
-
             return synchronized(lock) {
                 val existing = handlers.values.flatMap { it.keys }.toSet()
                 if (registrations.keys.any { it in existing }) return@synchronized false
                 registered.add(plugin)
                 handlers[id] = registrations
-                if (archive != null) panels[id] = archive
-                enqueueRegistrationLocked(registrationLocked(id))
+                plugin.panel?.let { panelSources[id] = it }
+                enqueueRegistrationLocked(id)
                 true
             }
         } finally {
@@ -116,9 +116,11 @@ internal class NectoSdkRuntime(
             val index = registered.indexOfFirst { it.id == id }
             if (index < 0) return
             handlers.remove(id)
+            panelSources.remove(id)
             panels.remove(id)
+            unreadablePanels.remove(id)
             registered.removeAt(index)
-            enqueueRegistrationLocked(registrationLocked(id))
+            enqueueRegistrationLocked(id)
         }
     }
 
@@ -357,7 +359,7 @@ internal class NectoSdkRuntime(
         // registration, not to any operation the plugin declared.
         if (invocation.name == PANEL_FETCH_NAME && invocation.version == PANEL_FETCH_VERSION) {
             val pluginID = invocation.input["pluginID"]?.stringValue ?: ""
-            val archive = synchronized(lock) { panels[pluginID] }
+            val archive = panel(pluginID)
             val result = if (archive != null) {
                 NectoPluginResult(invocation.requestID, output = archive.toJson())
             } else {
@@ -415,14 +417,19 @@ internal class NectoSdkRuntime(
     private fun startRegistrationUpdates(session: NectoMessageSession) {
         synchronized(lock) {
             if (this.session !== session) return
-            val initial = registered.map { registrationLocked(it.id) }
-                .filter { it.catalog.bridges.isNotEmpty() || it.panel != null }
-            val updates = Channel<NectoPluginRegistration>(REGISTRATION_BUFFER)
+            val initial = registered.map { it.id }
+            val updates = Channel<String>(REGISTRATION_BUFFER)
             registrationUpdates = updates
             registrationWriter = scope.launch {
                 try {
-                    for (registration in initial) sendRegistration(registration, session)
-                    for (registration in updates) sendRegistration(registration, session)
+                    for (id in initial) {
+                        val registration = registration(id)
+                        if (registration.catalog.bridges.isNotEmpty() || registration.panel != null) {
+                            sendRegistration(registration, session)
+                        }
+                    }
+                    // An update is sent even when empty: that is how a removal reaches the host.
+                    for (id in updates) sendRegistration(registration(id), session)
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
@@ -432,15 +439,38 @@ internal class NectoSdkRuntime(
         }
     }
 
-    private fun registrationLocked(id: String): NectoPluginRegistration = NectoPluginRegistration(
-        pluginID = id,
-        catalog = NectoBridgeCatalog(bridges = handlers[id].orEmpty().values.map { it.descriptor }),
-        panel = panels[id]?.stamp,
-    )
+    /** What the host is told about plugin [id] now. Reads its panel if not read yet. */
+    private fun registration(id: String): NectoPluginRegistration {
+        val bridges = synchronized(lock) { handlers[id].orEmpty().values.map { it.descriptor } }
+        return NectoPluginRegistration(
+            pluginID = id,
+            catalog = NectoBridgeCatalog(bridges = bridges),
+            panel = panel(id)?.stamp,
+        )
+    }
 
-    private fun enqueueRegistrationLocked(registration: NectoPluginRegistration) {
+    /** The panel of plugin [id], read once on first use. Null when it has none or it failed. */
+    private fun panel(id: String): NectoPanelArchive? {
+        val source = synchronized(lock) {
+            panels[id]?.let { return it }
+            if (id in unreadablePanels) return null
+            panelSources[id] ?: return null
+        }
+        // A panel that fails to read is a build problem: say so where the developer is.
+        val archive = runCatching { source.read() }
+            .onFailure { System.err.println("Necto: the panel of '$id' could not be read: $it") }
+            .getOrNull()
+        return synchronized(lock) {
+            // The plugin may have been taken away, or registered again, while reading.
+            if (panelSources[id] !== source) return@synchronized panels[id]
+            if (archive != null) panels[id] = archive else unreadablePanels += id
+            archive
+        }
+    }
+
+    private fun enqueueRegistrationLocked(id: String) {
         val updates = registrationUpdates ?: return
-        if (updates.trySend(registration).isFailure) {
+        if (updates.trySend(id).isFailure) {
             // Losing a catalog update would leave stale permissions. Reconnect for a full snapshot.
             stopRegistrationUpdatesLocked()
             session?.close()

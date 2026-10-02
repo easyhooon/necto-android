@@ -8,6 +8,7 @@ import io.github.easyhooon.necto.model.NectoHandshakeHello
 import io.github.easyhooon.necto.model.NectoJsonValue
 import io.github.easyhooon.necto.model.NectoOperationKind
 import io.github.easyhooon.necto.model.NectoPanelArchive
+import io.github.easyhooon.necto.sdk.NectoPluginPanel
 import io.github.easyhooon.necto.model.NectoPluginCancellation
 import io.github.easyhooon.necto.model.NectoPluginInvocation
 import io.github.easyhooon.necto.model.NectoPluginRegistration
@@ -221,6 +222,37 @@ class RuntimeTests {
 
             host.invoke("q", "plugins.assets", input = jsonObject("pluginID" to jsonOf("test")))
             assertEquals(NectoBridgeErrorCode.OPERATION_UNAVAILABLE, host.result().error?.code)
+        }
+    }
+
+    @Test
+    fun panelsAreReadOnceWhenAHostFirstNeedsThem() = runBlocking<Unit> {
+        withTimeout(10_000) {
+            val real = NectoEventsPlugin().panel!!
+            val reads = java.util.concurrent.atomic.AtomicInteger()
+            val registeringThread = Thread.currentThread()
+            var readingThread: Thread? = null
+            val plugin = object : NectoPlugin {
+                override val id = "lazy-panel"
+                override val panel = NectoPluginPanel {
+                    reads.incrementAndGet()
+                    readingThread = Thread.currentThread()
+                    real.read()
+                }
+                override fun register(necto: NectoRegistrar) = Unit
+            }
+
+            runtime.register(plugin)
+            assertEquals(0, reads.get(), "registering does not read the panel")
+
+            val host = connect()
+            assertNotNull(host.awaitRegistration("lazy-panel").panel)
+            assertEquals(1, reads.get())
+            assertTrue(readingThread !== registeringThread, "the panel is read off the registering thread")
+
+            host.invoke("p", "plugins.assets", input = jsonObject("pluginID" to jsonOf("lazy-panel")))
+            assertNotNull(host.result().output)
+            assertEquals(1, reads.get(), "the panel is read once and then held")
         }
     }
 
